@@ -46,93 +46,218 @@ class_diag <- function(score, truth, positive, cutoff=.5){
 
 # Mining, Classification, Prediction
 
-## Name and EID here
+## Don Le dhl595
 
 ### Introduction 
 
-Paragraph or two introducing your datasets and variables, why they are interesting to you, etc. See instructions for more information
+*I chose a dataset that holds a special place in my heart. It is called heart_transplant and details a set of heart transplants from the late 1900's. This is interesting to me because not only does it relate to one of the current organizations that I work with (Hearts 4 the Homeless), but it is known to be related clinically. It came from https://vincentarelbundock.github.io/Rdatasets/datasets.html. The important variables included in this data set include age which is the age of the patients, the survtime which is the number of days patients were alive after the date they were determined to be a candidate for a heart transplant until the termination date of the study, and survived which is a categorical variable describing if the patient survived the transplant or not. There are 103 observations. Of my binary columns, specifically "survived", I found there to be 28 "alive" and 75 "dead".*
 
 ```{R}
 library(tidyverse)
-# read your datasets in here, e.g., with read_csv()
-
-# if your dataset needs tidying, do so here
-
-# any other code here
+heart_transplant <- read.csv("heart_transplant.csv")
 ```
 
 ### Cluster Analysis
 
 ```{R}
 library(cluster)
-# clustering code here
+library(ggplot2)
+
+pam_dat1<-heart_transplant%>%select(acceptyear,age,survtime)
+sil_width<-vector()
+for(i in 2:10){  
+  pam_fit <- pam(pam_dat1, k = i)  
+  sil_width[i] <- pam_fit$silinfo$avg.width}
+
+ggplot()+geom_line(aes(x=1:10,y=sil_width))+scale_x_continuous(name="k",breaks=1:10)
+
+pam2 <- pam_dat1 %>% pam(k=2)
+pam2
+library(GGally)
+heart_transplant %>% mutate(cluster=as.factor(pam2$clustering)) %>% 
+ggpairs(columns = c("acceptyear","age","survtime"), aes(color=cluster))
+
+plot(pam2, which=2)
+
+pamclust<- pam_dat1 %>% mutate(cluster=as.factor(pam2$clustering))
+pamclust %>% group_by(cluster)%>%summarize_if(is.numeric,mean,na.rm=T)
 ```
 
-Discussion of clustering here
-    
+*Using ggplot, I was able to plot all possible k values to find the ideal number of clusters based on largest average silhouette width. This ended up to be k=2. Then, using ggpairs, I was able to show all pairwise combinations of my relevant variables colored by cluster assignment. The strongest correlation that I found was still very weak with a correlation value of -0.118 between survival time and age while the weakest was age and acceptyear which was -0.073. acceptyear and survtime both have negative correlations with each other and age. With an average silhouette width of 0.75, I was able to conclude that the structure is strong because it is greater than 0.71.The two patient id's that are the medoids are 80 and 20 which correspond to row numbers 80 and 23 respectively. They are relatively similar in acceptyear and age but very different in survtime with 110.4375 and 1004.9130 across clusters.*
     
 ### Dimensionality Reduction with PCA
 
 ```{R}
-# PCA code here
+heart_transplant %>% select(-X, -id, -survived, -prior, -transplant, -wait) %>% cor() %>% eigen() -> eig2
+eig2
+eig2$vectors
+eig2$values
+
+Y <- heart_transplant %>% select(3,4,6) %>% scale
+head(round(Y,3))
+plot(pam2,which=1)
+
+PCAscores_heart <- Y %*% eig2$vectors 
+PCAscores_heart
+heart_transplant%>%mutate(PC1=PCAscores_heart[,1], PC2=PCAscores_heart[,2])%>%
+ggplot(aes(PC1,PC2,color=survived))+geom_point()
+
+heart_transplant_numeric <- heart_transplant %>% select(acceptyear,age,survtime)
+princomp(heart_transplant_numeric, cor=T) -> pca1
+summary(pca1, loadings=T)
 ```
 
-Discussions of PCA here. 
+*The proportion of the total variance that comes from the first two principal components (PC1 and PC2) is 0.7283. Essentially, in terms of the original variables, PC1 compares the overall time. This means that the higher the PC1 value, the longer the time/year is for each variable with the exception of survtime which would be less. PC2 compares age and survtime to acceptyear higher PC2 means more time has passed for acceptyear, but less for age and survtime. PC3 compares all 3 together where a high PC3 value means a longer time has passed for all three variables.*
+
 
 ###  Linear Classifier
 
 ```{R}
-# linear classifier code here
+heart_transplant <- read.csv("heart_transplant.csv")
+heart_transplant$survived <- ifelse(heart_transplant$survived == "alive",1,0)
+
+fit <- glm(survived ~ age + acceptyear, data=heart_transplant)
+score <- predict(fit)
+score %>% round(3)
+
+heart_transplant%>% mutate(score=score) %>% ggplot(aes(age,survived)) + geom_point(aes(color=score>.5))+
+  geom_smooth(method="lm", se=F)+ylim(0,1) + geom_hline(yintercept=.5, lty=2)
+
+class_diag(score,truth=heart_transplant$survived, positive=1)
 ```
 
 ```{R}
-# cross-validation of linear classifier here
+heart_transplant <- read.csv("heart_transplant.csv")
+heart_transplant$survived <- ifelse(heart_transplant$survived == "alive","True","False")
+k=10
+
+data_heart_transplant<-sample_frac(heart_transplant) #randomly order rows
+folds_heart <- rep(1:k, length.out=nrow(data_heart_transplant)) #create folds
+
+diags_heart<-NULL
+for(i in 1:k){
+# create training and test sets
+  heart_train<-data_heart_transplant[folds_heart!=i,] 
+  heart_test<-data_heart_transplant[folds_heart==i,] 
+  heart_truth<-heart_test$survived
+  
+  # train model
+  fit_heart <- glm(survived == "True" ~ age + acceptyear, data = heart_train, family="binomial") ### SPECIFY THE LOGISTIC REGRESSION MODEL FIT TO THE TRAINING SET HERE
+  
+  # test model
+  probs_heart <- predict(fit_heart, newdata = heart_test, type = "response") ### GET PREDICTIONS FROM THE TRAINED MODEL ON THE TEST SET HERE
+  
+  # get performance metrics for each fold
+  diags_heart <-rbind(diags_heart,class_diag(probs_heart,heart_truth, positive = "True")) 
+}
+class_diag(probs_heart,heart_truth, positive = "True")
+#average performance metrics across all folds
+summarize_all(diags_heart,mean)
 ```
 
-Discussion here
+*For each of the AUC metrics for the entire dataset, they perform as follows. acc: 0.7573, sens: 0.25, spec: 0.9467, ppv: 0.6364, f1: 0.359, ba: 0.5983, auc: 0.781. Some are better than others and some are worse. I barely see a noticable difference in AUC from 0.781 to 0.72758. This shows that it does not show obvious signs of overfitting. If anything, there may be a only a little bit of overfitting.*
 
 ### Non-Parametric Classifier
 
 ```{R}
 library(caret)
-# non-parametric classifier code here
+heart_transplant <- read.csv("heart_transplant.csv")
+heart_transplant$survived <- ifelse(heart_transplant$survived == "alive","True","False")
+heart_transplant <- heart_transplant %>% select(-wait)
+
+knn_fit_heart <- knn3(factor(survived=="True",levels=c("TRUE","FALSE")) ~ age + acceptyear, data=heart_transplant)
+
+prob_knn_heart <- predict(knn_fit_heart, heart_transplant)
+
+class_diag(prob_knn_heart[,1], heart_transplant$survived, positive = "True")
 ```
 
 ```{R}
-# cross-validation of np classifier here
+heart_transplant <- read.csv("heart_transplant.csv")
+heart_transplant$survived <- ifelse(heart_transplant$survived == "alive","True","False")
+
+k=10
+
+data_heart_transplant<-sample_frac(heart_transplant) #randomly order rows
+folds_heart <- rep(1:k, length.out=nrow(data_heart_transplant)) 
+
+diags_heart<-NULL
+for(i in 1:k){
+# create training and test sets
+  heart_train<-data_heart_transplant[folds_heart!=i,] 
+  heart_test<-data_heart_transplant[folds_heart==i,] 
+  heart_truth<-heart_test$survived
+
+# train model
+  fit_heart <- knn3(survived == "True" ~ age + acceptyear, data = heart_train) ### SPECIFY THE LOGISTIC REGRESSION MODEL FIT TO THE TRAINING SET HERE
+
+# test model
+  probs_heart <- predict(fit_heart, newdata = heart_test)[,2]### GET PREDICTIONS FROM THE TRAINED MODEL ON THE TEST SET HERE
+
+# get performance metrics for each fold
+  diags_heart <-rbind(diags_heart,class_diag(probs_heart,heart_truth, positive = "True")) }
+
+#average performance metrics across all folds
+summarize_all(diags_heart,mean)
 ```
 
-Discussion
-
+*The model performs pretty poorly for most of the AUC metrics, and even more poorly for some others. acc: 0.7864, sens: 0.4286, spec: 0.92, ppv: 0.6667, f1: 0.5217, ba: 0.6743, auc: 0.8331. I do see a real decrease in AUC from 0.8331 to 0.60074 when predicting out of sample and does show signs of overfitting because of this. kNN performed best on new data in cross-validation.*
 
 ### Regression/Numeric Prediction
 
 ```{R}
-# regression model code here
+fit<-lm(survtime~ age + acceptyear ,data=heart_transplant)
+yhat<-predict(fit) 
+
+mean((heart_transplant$survtime-yhat)^2)
 ```
 
 ```{R}
-# cross-validation of regression model here
+k=10 #choose number of folds
+data<-heart_transplant[sample(nrow(heart_transplant)),] #randomly order rows
+folds<-cut(seq(1:nrow(heart_transplant)),breaks=k,labels=F) #create folds
+diags<-NULL
+for(i in 1:k){
+  train<-data[folds!=i,]
+  test<-data[folds==i,]
+  ## Fit linear regression model to training set
+  fit<-lm(survtime~ age + acceptyear,data=train)
+  ## Get predictions/y-hats on test set (fold i)
+  yhat<-predict(fit,newdata=test)
+  ## Compute prediction error  (MSE) for fold i
+  diags<-mean((test$survtime-yhat)^2) 
+}
+MSE <- mean(diags)## get average MSE across all folds (much higher error)!
+MSE
 ```
 
-Discussion
+*The MSE for the overall dataset was 177352.5 which is a massive number compared to what I expected. This shows that there is a lot of error. In the k-fold CV, I got the MSE shown above. To explain further, a larger MSE in the k-fold CV is not good because it means overfitting.*
 
 ### Python 
 
 ```{R}
 library(reticulate)
+use_python("/usr/bin/python3", required = F)
+MSE <- MSE
 ```
 
 ```{python}
-# python code here
+MSE = "mean squared error"
+print(MSE, "is", r.MSE)
 ```
 
-Discussion
+
+```{R}
+cat(c(MSE, "is", py$MSE))
+```
+
+*Using my mean squared error value from the regression/numeric prediction column, I was able to use the reticulate package and some of its functions to communicate between python and R. In this case, I was able to print the same sentence using both python and R and communicate variables across languages.*
 
 ### Concluding Remarks
 
 Include concluding remarks here, if any
 
+*Awesome project with great TA's and a wonderful professor!*
 
 
 
